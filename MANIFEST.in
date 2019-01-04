@@ -1,0 +1,5 @@
+include README.md
+include ./pygff/tests/data/*
+include ./LICENSE
+include ./CODE_OF_CONDUCT*
+include ./requirements.txt
