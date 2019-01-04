@@ -1,3 +1,8 @@
+[![Conda Version](https://img.shields.io/conda/vn/conda-forge/pygff.svg)](https://anaconda.org/conda-forge/pygff) 
+[![PyPI version](https://badge.fury.io/py/pygff.svg)](https://badge.fury.io/py/pygff)
+[![License](https://img.shields.io/badge/License-BSD%203--Clause-blue.svg)](https://github.com/betteridiot/pygff/blob/master/LICENSE) 
+</br>
+
 # Installation:
 
 There are multiple options available for installation
