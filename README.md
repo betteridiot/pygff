@@ -22,7 +22,7 @@ provided. **Note**: *`pytest` is required* for testing.
 If you choose to test the program on your current environment/build:
 
 ```bash
-# If installed from conda-forge or the PyPI []
+# If installed from conda-forge or the PyPI
 pytest --pyargs pygff
 
 # Or, if installed from source
