@@ -14,9 +14,11 @@ Usage:
 import os
 import sys
 import gzip
+import pickle
 import struct
 import numpy as np
 import pandas as pd
+from scipy.stats import iqr
 from bisect import bisect_right
 from urllib.parse import unquote
 from collections import OrderedDict
@@ -235,18 +237,26 @@ class GffEntry:
         return self._attributes[tag]
 
 
-def _get_average_diffs(seqid_starts, periods = 3):
+def bin_estimator(data):
     thresholds = {}
-    for seqid in seqid_starts:
-        unqiq_starts = list(seqid_starts[seqid])
-        thresholds[seqid] = pd.Series(unqiq_starts).diff(periods = periods).dropna().mean().astype(int)
+    for seqid in data:
+        uniq_starts = list(data[seqid])
+        if len(uniq_starts) == 1:
+            thresholds[seqid] = 1
+        else:
+            fd = 2 * (iqr(uniq_starts)/(len(uniq_starts)**(1./3)))
+            sturges = np.log2(len(uniq_starts)) + 1
+            min_range = min(uniq_starts)
+            max_range = max(uniq_starts)
+            full_range = max_range - min_range
+            estimator = int(np.ceil((max_range - min_range) / max(fd, sturges)))
+            thresholds[seqid] = int(full_range / estimator)
     return thresholds
 
 
-def _get_thresholds(handle, periods = 3, gzipped = False):
+def _get_thresholds(handle, gzipped = False):
     handle.seek(0)
     diffs = {}
-
     for line in handle:
         if gzipped:
             line = line.decode('ascii')
@@ -256,12 +266,12 @@ def _get_thresholds(handle, periods = 3, gzipped = False):
         diffs.setdefault(seqid, OrderedSet()).add(int(start))
 
     handle.seek(0)
-    return _get_average_diffs(diffs, periods = periods)
+    return bin_estimator(diffs)
 
 
-def _gen_index(fileobject, periods = 3, gzipped = False):
+def _gen_index(fileobject, gzipped = False):
     handle = fileobject
-    thresholds = _get_thresholds(handle, periods, gzipped)
+    thresholds = _get_thresholds(handle, gzipped)
     index = OrderedDict()
     curr_pos = 0
     curr_idx = 0
@@ -317,7 +327,7 @@ class GffFile:
         TypeError if GFF file is not version 3
     """
 
-    def __init__(self, filename, period = 3):
+    def __init__(self, filename, index_filename = None):
         """Initialize the fileobj
 
         Note: additional overhead applies due to a generating a small index of the GFF3 file
@@ -337,8 +347,18 @@ class GffFile:
             gzipped = False
         if not _is_version_3(filename, gzipped):
             raise TypeError('GFF file version is {}, but must be 3'.format(version))
-        self._index = _gen_index(self._handle, gzipped)
+        self._init_index(filename, index_filename, gzipped)
 
+    def _init_index(self, filename, index_filename = None, gzipped = False):
+        index_filename = index_filename if index_filename else filename + '.gai'
+        if os.path.exists(index_filename):
+            with open(index_filename, 'rb') as pkl_index_in:
+                self._index = pickle.load(pkl_index_in)
+        else:
+            self._index = _gen_index(self._handle, gzipped)
+            with open(index_filename, 'wb') as pkl_index_out:
+                pickle.dump(self._index, pkl_index_out, protocol=pickle.HIGHEST_PROTOCOL)
+                           
     def fetch(self, seqid, start, end, type = None):
         """Generator that fetches all GFF entries within a given region. 
 
