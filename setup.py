@@ -1,4 +1,3 @@
-from setuptools.command.test import test as TestCommand
 from setuptools import setup
 import os
 import sys
@@ -15,23 +14,6 @@ def readme():
     return long_description
 
 
-class PyTest(TestCommand):
-    user_args = [('pytest-args=', 'a', 'Arguments to pass to py.test')]
-
-    def initialize_options(self):
-        TestCommand.initialize_options(self)
-        self.pytest_args = []
-
-    def run_tests(self):
-        import pytest
-        errno = pytest.main(self.pytest_args)
-        if errno:
-            sys.exit(errno)
-        else:
-            errno = pytest.main(['-Wignore'])
-            sys.exit(errno)
-
-
 setup(
     name = 'pygff',
     version = __version__,
@@ -46,8 +28,6 @@ setup(
         'numpy',
         'pandas',
     ],
-    tests_require = ['pytest'],
-    cmdclass = {'test', PyTest},
     packages = ['pygff', 'pygff.tests'],
     package_data = {'pygff': ['LICENSE', 'CODE_OF_CONDUCT.md', 'pygff/tests/data/*']}
     classifiers = [
