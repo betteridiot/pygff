@@ -8,12 +8,6 @@
 There are multiple options available for installation
 
 ```bash
-# Recommended: from conda-forge
-conda install -c conda-forge pygff
-
-# From PyPI
-pip install pygff
-
 # From GitHub
 git clone https://github.com/betteridiot/pygff.git
 cd pygff
