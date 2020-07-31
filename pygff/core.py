@@ -6,7 +6,7 @@ take both plain-text GFF3 files or GZIP-compressed files.
 
 Usage:
     >>> import pygff as gfp
-    >>> with gfp.open('filename.gff.gz') as g3:
+    >>> with gfp.GffFile('filename.gff.gz') as g3:
     ...     for line in g3:
     ...         print(line)
 
@@ -21,6 +21,7 @@ from bisect import bisect_right
 from urllib.parse import unquote
 from collections import OrderedDict
 from functools import total_ordering
+from collections.abc import MutableSet
 
 _gzip_header = struct.Struct('<3B')
 _true_header = (31, 139, 8)
@@ -48,6 +49,65 @@ def _parse_attrs(attribute_column):
         for val in values.split(','):
             attr_dict.setdefault(tag, []).append(unquote(val))
     return attr_dict
+
+
+class OrderedSet(MutableSet):
+
+    def __init__(self, iterable=None):
+        self.end = end = [] 
+        end += [None, end, end]         # sentinel node for doubly linked list
+        self.map = {}                   # key --> [key, prev, next]
+        if iterable is not None:
+            self |= iterable
+
+    def __len__(self):
+        return len(self.map)
+
+    def __contains__(self, key):
+        return key in self.map
+
+    def add(self, key):
+        if key not in self.map:
+            end = self.end
+            curr = end[1]
+            curr[2] = end[1] = self.map[key] = [key, curr, end]
+
+    def discard(self, key):
+        if key in self.map:        
+            key, prev, next = self.map.pop(key)
+            prev[2] = next
+            next[1] = prev
+
+    def __iter__(self):
+        end = self.end
+        curr = end[2]
+        while curr is not end:
+            yield curr[0]
+            curr = curr[2]
+
+    def __reversed__(self):
+        end = self.end
+        curr = end[1]
+        while curr is not end:
+            yield curr[0]
+            curr = curr[1]
+
+    def pop(self, last=True):
+        if not self:
+            raise KeyError('set is empty')
+        key = self.end[1][0] if last else self.end[2][0]
+        self.discard(key)
+        return key
+
+    def __repr__(self):
+        if not self:
+            return '%s()' % (self.__class__.__name__,)
+        return '%s(%r)' % (self.__class__.__name__, list(self))
+
+    def __eq__(self, other):
+        if isinstance(other, OrderedSet):
+            return len(self) == len(other) and list(self) == list(other)
+        return set(self) == set(other)
 
 
 @total_ordering
@@ -175,19 +235,15 @@ class GffEntry:
         return self._attributes[tag]
 
 
-def _get_stats(seqid_starts, periods = 3):
-    means = []
-    modes = []
-    mads = []
-    for key in seqid_starts:
-        series = pd.Series(seqid_starts[key]).diff(periods = periods)
-        means.append(series.mean())
-        modes.append(series.mode())
-        mads.append(series.mad())
-    return (np.mean(means), np.mean(modes), np.mean(mads))
+def _get_average_diffs(seqid_starts, periods = 3):
+    thresholds = {}
+    for seqid in seqid_starts:
+        unqiq_starts = list(seqid_starts[seqid])
+        thresholds[seqid] = pd.Series(unqiq_starts).diff(periods = periods).dropna().mean().astype(int)
+    return thresholds
 
 
-def _get_threshold(handle, periods = 3, gzipped = False):
+def _get_thresholds(handle, periods = 3, gzipped = False):
     handle.seek(0)
     diffs = {}
 
@@ -197,21 +253,19 @@ def _get_threshold(handle, periods = 3, gzipped = False):
         if not line or line.startswith('#'):
             continue
         seqid, source, type, start, *others = line.strip().split('\t')
-        diffs.setdefault(seqid, []).append(int(start))
+        diffs.setdefault(seqid, OrderedSet()).add(int(start))
 
     handle.seek(0)
-    return max(_get_stats(diffs, periods = periods))
+    return _get_average_diffs(diffs, periods = periods)
 
 
 def _gen_index(fileobject, periods = 3, gzipped = False):
-    if gzipped:
-        handle = gzip.open(fileobject.name, 'rb')
-    else:
-        handle = fileobject.fileobj
-    threshold = _get_threshold(handle, periods, gzipped)
+    handle = fileobject
+    thresholds = _get_thresholds(handle, periods, gzipped)
     index = OrderedDict()
     curr_pos = 0
     curr_idx = 0
+    curr_threshold = None
     prev_start = None
     for line in handle:
         if gzipped:
@@ -225,8 +279,9 @@ def _gen_index(fileobject, periods = 3, gzipped = False):
         if seqid not in index:
             prev_start = None
             curr_idx = 0
-        if prev_start is None or (start - prev_start) > threshold:
-            index.setdefault(seqid, {'start': {}, 'pos': {}})
+            curr_threshold = thresholds[seqid]
+        if prev_start is None or (start - prev_start) > curr_threshold:
+            index.setdefault(seqid, {'start': OrderedDict(), 'pos': OrderedDict()})
             index[seqid]['start'].setdefault(curr_idx, start)
             index[seqid]['pos'].setdefault(curr_idx, curr_pos)
             curr_idx += 1
@@ -242,7 +297,7 @@ def _find_le(container, start):
     if i:
         # give the offset
         return container['pos'][i-1]
-    raise ValueError, "{} position not within the GFF start position range".format(start)
+    raise ValueError("{} position not within the GFF start position range".format(start))
 
 
 class GffFile:
@@ -278,7 +333,7 @@ class GffFile:
             self._handle = gzip.open(filename, 'rb')
             gzipped = True
         else:
-            self._handle = open(filename, 'rb')
+            self._handle = open(filename, 'r')
             gzipped = False
         if not _is_version_3(filename, gzipped):
             raise TypeError('GFF file version is {}, but must be 3'.format(version))
